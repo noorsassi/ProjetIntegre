@@ -1,0 +1,1 @@
+Taux_Churn = DIVIDE(CALCULATE(COUNT(fct_comptes[ACCOUNT_NO]), fct_comptes[CHURN] = 1), COUNT(fct_comptes[ACCOUNT_NO]), 0)
