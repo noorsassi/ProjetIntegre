@@ -1,0 +1,88 @@
+import pandas as pd
+import numpy as np
+import duckdb
+import os
+
+def initialiser_et_charger_etl():
+    print("🚀 [ETL] Démarrage du pipeline analytique...")
+    
+    # -------------------------------------------------------------------------
+    # 1. EXTRACT : Lecture des sources (CSV principal et dimensions Excel)
+    # -------------------------------------------------------------------------
+    print("📥 [1/3] Extraction des données brutes en cours...")
+    
+    # Remplacement par les noms de fichiers exacts décrits dans vos documents
+    path_main = "data/fichier_principal.csv" # Mettez ici le nom exact de votre fichier de 130 Mo
+    
+    if not os.path.exists(path_main):
+        raise FileNotFoundError(f"Veuillez placer votre fichier principal dans : {path_main}")
+        
+    # Lecture optimisée du fichier principal (ajustez le séparateur si nécessaire : ',' ou ';')
+    df_main = pd.read_csv(path_main, sep=None, engine='python')
+    
+    # Chargement des tables de dimensions clés demandées
+    dim_industry = pd.read_excel("data/dim_INDUSTRY.xlsx")
+    dim_currency = pd.read_excel("data/dim_CURRENCY.xlsx")
+    dim_closure = pd.read_excel("data/dim_Closure_reason.xlsx")
+    dim_category = pd.read_excel("data/dim_CATEGORY.ACCOUNT.xlsx")
+    
+    # -------------------------------------------------------------------------
+    # 2. TRANSFORM : Nettoyage, Calculs dérivés et Alignement réglementaire
+    # -------------------------------------------------------------------------
+    print("⚙️ [2/3] Phase de transformation et de nettoyage...")
+    
+    # Formatage des dates numériques (YYYYMMDD) vers le format Datetime standard
+    date_cols = ['DATE_OF_BIRTH', 'CUST_OPENING_DATE', 'ACCT_OPENING_DATE', 'ACCT_CLOSE_DATE']
+    for col in date_cols:
+        if col in df_main.columns:
+            df_main[col] = pd.to_datetime(df_main[col].astype(str).str.split('.').str[0], format='%Y%m%d', errors='coerce')
+            
+    # Calcul des variables dérivées (Basé sur l'année courante 2026 définie par l'école)
+    ANNEE_COURANTE = 2026
+    df_main['AGE'] = ANNEE_COURANTE - df_main['DATE_OF_BIRTH'].dt.year
+    df_main['CUST_TENURE_YEARS'] = ANNEE_COURANTE - df_main['CUST_OPENING_DATE'].dt.year
+    df_main['ACCOUNT_TENURE_YEARS'] = ANNEE_COURANTE - df_main['ACCT_OPENING_DATE'].dt.year
+    
+    # Traitement des valeurs manquantes textuelles et numériques critiques
+    df_main['MARITAL_STATUS'] = df_main['MARITAL_STATUS'].fillna('U').replace({'nan': 'U', '': 'U'})
+    df_main['SALARY'] = df_main['SALARY'].fillna(df_main['SALARY'].median())
+    df_main['ACCT_BALANCE'] = df_main['ACCT_BALANCE'].fillna(0)
+    
+    # Déduplication basée sur la clé primaire composite de la table de faits
+    df_main = df_main.drop_duplicates(subset=['CUSTOMER_NO', 'ACCOUNT_NO'])
+    
+    # Définition stricte et formelle de la variable cible : CHURN
+    # churn = 1 si le statut contient "Closed", sinon 0
+    df_main['CHURN'] = np.where(df_main['ACCOUNT_STATUS'].astype(str).str.contains('Closed', case=False, na=False), 1, 0)
+    
+    # -------------------------------------------------------------------------
+    # 3. LOAD : Structuration et Persistance dans DuckDB (DWH)
+    # -------------------------------------------------------------------------
+    print("💾 [3/3] Chargement des données dans le Data Warehouse DuckDB...")
+    
+    # Connexion ou création de la base de données analytique locale
+    conn = duckdb.connect('dwh_churn.db')
+    
+    # Chargement des dimensions dans le DWH
+    conn.execute("CREATE OR REPLACE TABLE dim_industry AS SELECT * FROM dim_industry")
+    conn.execute("CREATE OR REPLACE TABLE dim_currency AS SELECT * FROM dim_currency")
+    conn.execute("CREATE OR REPLACE TABLE dim_closure AS SELECT * FROM dim_closure")
+    conn.execute("CREATE OR REPLACE TABLE dim_category AS SELECT * FROM dim_category")
+    
+    # Création de la table de faits finale enrichie
+    conn.execute("CREATE OR REPLACE TABLE fct_comptes AS SELECT * FROM df_main")
+    
+    # Vérification de la cohérence et affichage du volume stocké
+    count_rows = conn.execute("SELECT COUNT(*) FROM fct_comptes").fetchone()[0]
+    churn_rate = conn.execute("SELECT AVG(CHURN) * 100 FROM fct_comptes").fetchone()[0]
+    
+    conn.close()
+    
+    print("-" * 50)
+    print(f"✨ [SUCCÈS] Pipeline exécuté avec reproductibilité complète !")
+    print(f"📊 Nombre de lignes insérées dans 'fct_comptes' : {count_rows}")
+    print(f"📈 Taux de churn global observé : {churn_rate:.2f}%")
+    print("-" * 50)
+
+if __name__ == "__main__":
+    initialiser_et_charger_etl()
