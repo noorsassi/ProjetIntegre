@@ -1,0 +1,20 @@
+import duckdb
+
+conn = duckdb.connect('dwh_churn.db')
+
+# Jointure de test entre la table de faits et la dimension Industrie
+query_validation = """
+    SELECT 
+        f.CUSTOMER_NO,
+        f.ACCOUNT_NO,
+        f.AGE,
+        f.CHURN,
+        i.INDUSTRY_CODE,
+        c.CURRENCY
+    FROM fct_comptes f
+    LEFT JOIN dim_industry i ON f.INDUSTRY = i.INDUSTRY_CODE
+    LEFT JOIN dim_currency c ON f.CURRENCY = c.CURRENCY
+    LIMIT 5;
+"""
+print(conn.execute(query_validation).df())
+conn.close()
